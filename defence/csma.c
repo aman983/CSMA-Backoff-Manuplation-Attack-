@@ -53,23 +53,21 @@
 #define LOG_MODULE "CSMA"
 #define LOG_LEVEL LOG_LEVEL_MAC
 
-// ANS: Implementation for back-off manipulation detection
-
+// ---- Start of the new code. ----
 
 #define NUMBER_OF_ALLOWED_NODES 10
-
-// for the EWMA, we use an alpha value of 1/8, thus a bitshift of 3.
 #define ALPHA_SHIFT 3
 #define MAX_VALID_IAT (RTIMER_SECOND / 10)
-#define DETECTION_THRESHOLD 1500
-#define MAX_SUSPICION 10
+#define CHEAT_THRESHOLD_TICKS 1500
+#define MAX_SUSPICIOUS_SCORE 10
+
 
 // Stores info about a node.
 typedef struct
 {
   linkaddr_t addr;
   uint32_t ewma;
-  int8_t suspicion;
+  int8_t suspicion_score;
   rtimer_clock_t last_time;
   bool is_blacklisted;
 } Node;
@@ -78,7 +76,6 @@ static Node nodes[NUMBER_OF_ALLOWED_NODES];
 static int nodes_length = 0;
 static int nr_dropped_packets = 0;
 
-// helper function to display the Link addr
 static void print_addr(const linkaddr_t *sender_addr)
 {
   printf("Address: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -87,14 +84,15 @@ static void print_addr(const linkaddr_t *sender_addr)
 }
 
 
-// returns the corresponding node in the array, or creates a new node in the array if
-// it has not been registered.
+// If the node has been stored in the array, return it.
+// otherwise, create a new node in the array.
 static Node *get_node(const linkaddr_t *node_addr)
 {
 
   if (linkaddr_cmp(node_addr, &linkaddr_null))
     return NULL;
 
+  // Check if the node is in the stored array.
   for (int i = 0; i < nodes_length; i++)
   {
     if (linkaddr_cmp(node_addr, &nodes[i].addr))
@@ -105,19 +103,19 @@ static Node *get_node(const linkaddr_t *node_addr)
 
   if (nodes_length >= NUMBER_OF_ALLOWED_NODES)
   {
-    // Out of bounds for this specific implementation.
-    printf("[Backoff Detection] Too many nodes, ignoring\n");
+    // Out of bounds for this experiment. Show an error.
+    printf("[Backoff Detection] Too many nodes in this set-up.\n");
     return NULL;
   }
 
-  printf("[Backoff Detection] Encountered a new node. ");
+  printf("[Backoff Detection] Encountered a new node. \n");
   print_addr(node_addr);
 
   // Add the node to the index
   linkaddr_copy(&nodes[nodes_length].addr, node_addr);
 
   nodes[nodes_length].ewma = 0;
-  nodes[nodes_length].suspicion = 0;
+  nodes[nodes_length].suspicion_score = 0;
   nodes[nodes_length].last_time = RTIMER_NOW() - (RTIMER_SECOND * 30); // set far in the past to avoid instant detection.
   nodes[nodes_length].is_blacklisted = false;
 
@@ -127,7 +125,8 @@ static Node *get_node(const linkaddr_t *node_addr)
 }
 
 
-/* TODO: create violation function */
+// process_node calculates the ewma, compares it to the threshold and checks if the node is malicious.
+// returns true if the node should be banned.
 static bool process_node(Node *node)
 {
 
@@ -142,32 +141,25 @@ static bool process_node(Node *node)
   if (node->ewma == 0) {
     node->ewma = iat;
   } else {
-    uint32_t ewma_prev = node->ewma;
-
-
-    // ewma = alpha * iat + (1-alpha) * s_prev
-    // rewritten to use only integers
-    node->ewma = (iat + (ewma_prev << ALPHA_SHIFT) - ewma_prev) >> ALPHA_SHIFT;
+    uint32_t s_prev = node->ewma;
+    node->ewma = (iat + (s_prev << ALPHA_SHIFT) - s_prev) >> ALPHA_SHIFT;
   }
 
-  if (node->ewma < DETECTION_THRESHOLD) {
+  if (node->ewma < CHEAT_THRESHOLD_TICKS) {
+    
+    node->suspicion_score++;
 
-    node->suspicion++;
-
-    if (node->suspicion >= MAX_SUSPICION) {
+    if (node->suspicion_score >= MAX_SUSPICIOUS_SCORE) {
       return true;
     }
-    else if (node->suspicion > 0) {
-
-    node->suspicion--;
+  } else if (node->suspicion_score > 0) {
+    node->suspicion_score--;
   }
 
   return false;
 }
 
-
-
-// END ANS
+// ---- End of the new code. ----
 
 static void
 init_sec(void)
@@ -222,7 +214,9 @@ input_packet(void)
   else
   {
 
-    // new code starts here
+    // 
+    //    New code for ANS starts here
+    //
     Node *node = get_node(packetbuf_addr(PACKETBUF_ADDR_SENDER));
 
     if (node != NULL)
@@ -249,7 +243,9 @@ input_packet(void)
       }
     }
 
-    // new code ends here
+    // 
+    //    New code for ANS ends here
+    //
 
     int duplicate = 0;
 
