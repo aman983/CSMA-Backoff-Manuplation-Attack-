@@ -55,22 +55,21 @@
 
 // ANS: Implementation for back-off manipulation detection
 
-#define THRESHOLD 5
+
 #define NUMBER_OF_ALLOWED_NODES 10
 
-
+// for the EWMA, we use an alpha value of 1/8, thus a bitshift of 3.
 #define ALPHA_SHIFT 3
 #define MAX_VALID_IAT (RTIMER_SECOND / 10)
-#define CHEAT_THRESHOLD_TICKS 1500
-#define MAX_SUSPICIOUS_SCORE 10
-
+#define DETECTION_THRESHOLD 1500
+#define MAX_SUSPICION 10
 
 // Stores info about a node.
 typedef struct
 {
   linkaddr_t addr;
-  uint32_t smoothed_iat;
-  int8_t suspicion_score;
+  uint32_t ewma;
+  int8_t suspicion;
   rtimer_clock_t last_time;
   bool is_blacklisted;
 } Node;
@@ -78,9 +77,8 @@ typedef struct
 static Node nodes[NUMBER_OF_ALLOWED_NODES];
 static int nodes_length = 0;
 static int nr_dropped_packets = 0;
-static int nr_increased = 0;
-static int nr_decreased = 0;
 
+// helper function to display the Link addr
 static void print_addr(const linkaddr_t *sender_addr)
 {
   printf("Address: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -89,14 +87,14 @@ static void print_addr(const linkaddr_t *sender_addr)
 }
 
 
-// gets the node from the storage.
+// returns the corresponding node in the array, or creates a new node in the array if
+// it has not been registered.
 static Node *get_node(const linkaddr_t *node_addr)
 {
 
   if (linkaddr_cmp(node_addr, &linkaddr_null))
     return NULL;
 
-  // Check if the node is in the stored array.
   for (int i = 0; i < nodes_length; i++)
   {
     if (linkaddr_cmp(node_addr, &nodes[i].addr))
@@ -107,19 +105,19 @@ static Node *get_node(const linkaddr_t *node_addr)
 
   if (nodes_length >= NUMBER_OF_ALLOWED_NODES)
   {
-    // Out of bounds for this experiment. Show an error.
-    LOG_ERR("ANS experiment failure: Too many nodes in this set-up.\n");
+    // Out of bounds for this specific implementation.
+    printf("[Backoff Detection] Too many nodes, ignoring\n");
     return NULL;
   }
 
-  printf("Encountered a new node. \n");
+  printf("[Backoff Detection] Encountered a new node. ");
   print_addr(node_addr);
 
   // Add the node to the index
   linkaddr_copy(&nodes[nodes_length].addr, node_addr);
 
-  nodes[nodes_length].smoothed_iat = 0;
-  nodes[nodes_length].suspicion_score = 0;
+  nodes[nodes_length].ewma = 0;
+  nodes[nodes_length].suspicion = 0;
   nodes[nodes_length].last_time = RTIMER_NOW() - (RTIMER_SECOND * 30); // set far in the past to avoid instant detection.
   nodes[nodes_length].is_blacklisted = false;
 
@@ -141,36 +139,27 @@ static bool process_node(Node *node)
 
   if (iat > MAX_VALID_IAT) return false;
 
-  if (node->smoothed_iat == 0) {
-    node->smoothed_iat = iat;
+  if (node->ewma == 0) {
+    node->ewma = iat;
   } else {
-    uint32_t s_prev = node->smoothed_iat;
-    node->smoothed_iat = (iat + (s_prev << ALPHA_SHIFT) - s_prev) >> ALPHA_SHIFT;
+    uint32_t ewma_prev = node->ewma;
+
+
+    // ewma = alpha * iat + (1-alpha) * s_prev
+    // rewritten to use only integers
+    node->ewma = (iat + (ewma_prev << ALPHA_SHIFT) - ewma_prev) >> ALPHA_SHIFT;
   }
 
-  if (node->smoothed_iat < CHEAT_THRESHOLD_TICKS) {
-    // printf("[Backoff Detection] Suspicion increased\n");
-    nr_increased++;
+  if (node->ewma < DETECTION_THRESHOLD) {
 
-    if (nr_increased % 10 == 0) {
-      printf("[Backoff Detection] Total increased: %d\n", nr_increased);
-    }
+    node->suspicion++;
 
-    node->suspicion_score++;
-
-    if (node->suspicion_score >= MAX_SUSPICIOUS_SCORE) {
+    if (node->suspicion >= MAX_SUSPICION) {
       return true;
     }
-    else if (node->suspicion_score > 0) {
+    else if (node->suspicion > 0) {
 
-    nr_decreased++;
-
-    if (nr_decreased % 10 == 0) {
-      printf("[Backoff Detection] Total decreased: %d\n", nr_decreased);
-    }
-
-
-    node->suspicion_score--;
+    node->suspicion--;
   }
 
   return false;
@@ -233,9 +222,7 @@ input_packet(void)
   else
   {
 
-    // 
-    //    New code for ANS starts here
-    //
+    // new code starts here
     Node *node = get_node(packetbuf_addr(PACKETBUF_ADDR_SENDER));
 
     if (node != NULL)
@@ -262,9 +249,7 @@ input_packet(void)
       }
     }
 
-    // 
-    //    New code for ANS ends here
-    //
+    // new code ends here
 
     int duplicate = 0;
 
