@@ -55,6 +55,7 @@
 
 // ---- Start of the new code. ----
 
+#define USE_DEFENCE
 #define NUMBER_OF_ALLOWED_NODES 10
 #define ALPHA_SHIFT 3
 #define MAX_VALID_IAT (RTIMER_SECOND / 10)
@@ -217,6 +218,7 @@ input_packet(void)
     // 
     //    New code for ANS starts here
     //
+    #ifdef USE_DEFENCE
     Node *node = get_node(packetbuf_addr(PACKETBUF_ADDR_SENDER));
 
     if (node != NULL)
@@ -246,6 +248,7 @@ input_packet(void)
     // 
     //    New code for ANS ends here
     //
+    #endif
 
     int duplicate = 0;
 
